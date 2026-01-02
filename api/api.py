@@ -1,4 +1,5 @@
 # api/api.py
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -6,10 +7,12 @@ from sqlalchemy.orm import Session
 from db.config import engine
 from services.finance_service import is_emi_question, handle_emi_query
 from services.llm_answer_engine import LLMAnswerEngine
-from services.finance_knowledge import FinanceKnowledgeBuilder
+from llm.client import GroqLLMClient
+from memory.session import add_message, build_context
 
 app = FastAPI(title="Production-grade Finance Assistant API")
 
+llm = GroqLLMClient()
 llm_engine = LLMAnswerEngine()
 
 
@@ -27,7 +30,10 @@ def root():
 def chat(req: ChatRequest):
     session = Session(bind=engine)
 
-    # ---------- EMI FLOW ----------
+    # ✅ Store user message
+    add_message(req.session_id, "user", req.message)
+
+    # ---- EMI FLOW ----
     if is_emi_question(req.message):
         emi_data = handle_emi_query(req.message, session)
 
@@ -36,19 +42,23 @@ def chat(req: ChatRequest):
 
         explanation = llm_engine.explain_emi(emi_data)
 
+        # ✅ Store assistant response
+        add_message(req.session_id, "assistant", explanation)
+
         return {
             "response": explanation,
             "data": emi_data,
             "session_id": req.session_id
         }
 
-    # ---------- NORMAL FINANCE Q&A ----------
-    kb = FinanceKnowledgeBuilder(session)
-    context = kb.build_full_context()
+    # ---- NORMAL FINANCE Q&A ----
+    context = build_context(req.session_id)
 
-    answer = llm_engine.answer(req.message, context)
+    answer = llm.generate(
+        prompt=f"{context}\n\nUser: {req.message}",
+        system_prompt=llm_engine.SYSTEM_PROMPT
+    )
 
-    return {
-        "response": answer,
-        "session_id": req.session_id
-    }
+    add_message(req.session_id, "assistant", answer)
+
+    return {"response": answer, "session_id": req.session_id}
