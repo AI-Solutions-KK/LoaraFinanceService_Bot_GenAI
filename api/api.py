@@ -6,13 +6,11 @@ from sqlalchemy.orm import Session
 
 from db.config import engine
 from services.finance_service import is_emi_question, handle_emi_query
+from services.context_builder import build_context
 from services.llm_answer_engine import LLMAnswerEngine
-from llm.client import GroqLLMClient
-from memory.session import add_message, build_context
 
 app = FastAPI(title="Production-grade Finance Assistant API")
 
-llm = GroqLLMClient()
 llm_engine = LLMAnswerEngine()
 
 
@@ -28,22 +26,16 @@ def root():
 
 @app.post("/chat")
 def chat(req: ChatRequest):
-    session = Session(bind=engine)
+    db_session = Session(bind=engine)
 
-    # ✅ Store user message
-    add_message(req.session_id, "user", req.message)
-
-    # ---- EMI FLOW ----
+    # ---- EMI FLOW (NO CHANGE) ----
     if is_emi_question(req.message):
-        emi_data = handle_emi_query(req.message, session)
+        emi_data = handle_emi_query(req.message, db_session)
 
         if "error" in emi_data:
             return {"response": emi_data["error"], "session_id": req.session_id}
 
         explanation = llm_engine.explain_emi(emi_data)
-
-        # ✅ Store assistant response
-        add_message(req.session_id, "assistant", explanation)
 
         return {
             "response": explanation,
@@ -51,14 +43,16 @@ def chat(req: ChatRequest):
             "session_id": req.session_id
         }
 
-    # ---- NORMAL FINANCE Q&A ----
-    context = build_context(req.session_id)
-
-    answer = llm.generate(
-        prompt=f"{context}\n\nUser: {req.message}",
-        system_prompt=llm_engine.SYSTEM_PROMPT
+    # ---- NORMAL Q&A ----
+    context = build_context(
+        question=req.message,
+        session_id=req.session_id,
+        db_session=db_session
     )
 
-    add_message(req.session_id, "assistant", answer)
+    answer = llm_engine.answer(req.message, context)
 
-    return {"response": answer, "session_id": req.session_id}
+    return {
+        "response": answer,
+        "session_id": req.session_id
+    }

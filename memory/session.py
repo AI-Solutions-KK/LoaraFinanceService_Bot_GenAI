@@ -1,40 +1,20 @@
 # memory/session.py
 
-from typing import Dict, List
+# TEMPORARY in-memory store
+# Clears automatically on server restart
 
-# In-memory store (safe for Phase-1 / replaceable later)
-_SESSION_STORE: Dict[str, List[dict]] = {}
-
-MAX_TURNS = 10  # keep memory bounded
+_SESSION_STORE = {}
 
 
-def get_session(session_id: str) -> List[dict]:
-    return _SESSION_STORE.get(session_id, [])
+def get_session_context(session_id: str) -> str:
+    return _SESSION_STORE.get(session_id, "")
 
 
-def add_message(session_id: str, role: str, content: str):
-    history = _SESSION_STORE.get(session_id, [])
-    history.append({"role": role, "content": content})
-
-    # Trim old messages
-    if len(history) > MAX_TURNS:
-        history = history[-MAX_TURNS:]
-
-    _SESSION_STORE[session_id] = history
+def append_session_context(session_id: str, text: str):
+    existing = _SESSION_STORE.get(session_id, "")
+    updated = (existing + "\n" + text).strip()
+    _SESSION_STORE[session_id] = updated
 
 
-def build_context(session_id: str) -> str:
-    """
-    Convert session messages into compact context for LLM.
-    """
-    history = get_session(session_id)
-
-    if not history:
-        return ""
-
-    lines = []
-    for msg in history:
-        prefix = "User" if msg["role"] == "user" else "Assistant"
-        lines.append(f"{prefix}: {msg['content']}")
-
-    return "\n".join(lines)
+def clear_session(session_id: str):
+    _SESSION_STORE.pop(session_id, None)
